@@ -1,174 +1,137 @@
---[[ 
-    ESP LIBRARY - ORIENTADA A OBJETOS (Model / BasePart)
+-- ESPModule.lua
+-- Biblioteca de ESP orientada a endereço de objetos
 
-    ✅ Features:
-    - Enable geral
-    - Tracers
-    - Highlights (Outline / Fill)
-    - Nome acima da cabeça
-    - Distância
-    - Adição e modificação por referência direta (ex: workspace.Part)
+local ESP = {}
+ESP.__index = ESP
 
-    🔧 API:
-    ESP.Settings.<Option> = true/false
-    ESP:Add(target: Instance, name: string)
-    ESP:Modify(target: Instance, config: table)
-
-    🔁 Requer: RunService.RenderStepped
---]]
-
-local ESP = {
-    Settings = {
-        Enable = true,
-        EspTracer = true,
-        EspHighlightOutline = true,
-        EspHighlightFill = true,
-        EspName = true,
-        EspDistance = true
-    },
-    Targets = {}
+-- Configurações padrão
+local DEFAULTS = {
+    Tracer = { Enabled = true, Position = "Bottom", Color = Color3.fromRGB(255, 255, 255) },
+    HighlightOutline = { Enabled = true, Color = Color3.fromRGB(255, 255, 0) },
+    HighlightFill = { Enabled = true, Color = Color3.fromRGB(255, 255, 0), Transparency = 0.5 },
+    Name = { Enabled = true, Color = Color3.fromRGB(255, 255, 255) },
+    Distance = { Enabled = true, Color = Color3.fromRGB(255, 255, 255) }
 }
 
-local camera = workspace.CurrentCamera
-local players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+-- Armazena os ESPs ativos
+ESP.Active = {}
 
--- Util: Desenha texto 2D
-local function createText()
-    local txt = Drawing.new("Text")
-    txt.Size = 13
-    txt.Center = true
-    txt.Outline = true
-    txt.Visible = false
-    txt.Color = Color3.new(1, 1, 1)
-    return txt
+-- Função para criar um Drawing Object de forma simples
+local function CreateDrawing(Type, Props)
+    local obj = Drawing.new(Type)
+    for prop, val in pairs(Props) do
+        obj[prop] = val
+    end
+    return obj
 end
 
--- Util: Desenha linha (tracer)
-local function createLine()
-    local line = Drawing.new("Line")
-    line.Thickness = 1
-    line.Transparency = 1
-    line.Visible = false
-    line.Color = Color3.new(1, 1, 1)
-    return line
-end
+-- Função para adicionar um ESP a um objeto
+function ESP:Add(target, opts)
+    if not target or not target:IsA("BasePart") then return end
+    opts = opts or {}
 
--- Util: Cria highlight
-local function createHighlight(target)
-    local hl = Instance.new("Highlight")
-    hl.Adornee = target
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Enabled = true
-    hl.Parent = target
-    return hl
-end
+    local settings = {}
+    for k,v in pairs(DEFAULTS) do
+        settings[k] = table.clone(v)
+        if opts[k] then
+            for p, val in pairs(opts[k]) do
+                settings[k][p] = val
+            end
+        end
+    end
 
--- Adiciona objeto ao ESP
-function ESP:Add(target: Instance, name: string)
-    if not target or typeof(target) ~= "Instance" then return end
-    if self.Targets[target] then return end
-
-    local obj = {
+    local espData = {
         Target = target,
-        Name = name or target.Name,
-        Visible = true,
-        Tracer = createLine(),
-        Text = createText(),
-        Highlight = nil
+        Settings = settings,
+        Drawing = {}
     }
 
-    if target:IsA("Model") then
-        obj.PrimaryPart = target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart")
-    elseif target:IsA("BasePart") then
-        obj.PrimaryPart = target
+    -- Tracer
+    if settings.Tracer.Enabled then
+        espData.Drawing.Tracer = CreateDrawing("Line", { Thickness = 1, Color = settings.Tracer.Color })
     end
 
-    if obj.PrimaryPart and (ESP.Settings.EspHighlightOutline or ESP.Settings.EspHighlightFill) then
-        obj.Highlight = createHighlight(target)
+    -- Nome
+    if settings.Name.Enabled then
+        espData.Drawing.Name = CreateDrawing("Text", { Size = 14, Center = true, Color = settings.Name.Color, Outline = true })
     end
 
-    self.Targets[target] = obj
+    -- Distância
+    if settings.Distance.Enabled then
+        espData.Drawing.Distance = CreateDrawing("Text", { Size = 13, Center = true, Color = settings.Distance.Color, Outline = true })
+    end
+
+    -- Highlight
+    if settings.HighlightOutline.Enabled or settings.HighlightFill.Enabled then
+        local highlight = Instance.new("Highlight")
+        highlight.Adornee = target.Parent
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = settings.HighlightFill.Color
+        highlight.FillTransparency = settings.HighlightFill.Transparency
+        highlight.OutlineColor = settings.HighlightOutline.Color
+        highlight.OutlineTransparency = 0
+        highlight.Parent = game.CoreGui
+        espData.HighlightInstance = highlight
+    end
+
+    table.insert(self.Active, espData)
+    return espData
 end
 
--- Modifica visibilidade/configuração de um target existente
-function ESP:Modify(target: Instance, config: table)
-    local obj = self.Targets[target]
-    if not obj then return end
-    for key, value in pairs(config) do
-        obj[key] = value
+-- Função para remover um ESP
+function ESP:Remove(espData)
+    for _, obj in pairs(espData.Drawing) do
+        if obj.Remove then obj:Remove() end
+    end
+    if espData.HighlightInstance then
+        espData.HighlightInstance:Destroy()
     end
 end
 
--- Remove target opcionalmente (não obrigatório, mas útil)
-function ESP:Remove(target: Instance)
-    local obj = self.Targets[target]
-    if obj then
-        if obj.Text then obj.Text:Remove() end
-        if obj.Tracer then obj.Tracer:Remove() end
-        if obj.Highlight then obj.Highlight:Destroy() end
-        self.Targets[target] = nil
-    end
-end
+-- Atualização em loop
+game:GetService("RunService").RenderStepped:Connect(function()
+    local cam = workspace.CurrentCamera
+    for _, espData in ipairs(ESP.Active) do
+        local target = espData.Target
+        if target and target.Parent then
+            local pos, visible = cam:WorldToViewportPoint(target.Position)
+            if visible then
+                -- Tracer
+                if espData.Drawing.Tracer then
+                    local startPos
+                    if espData.Settings.Tracer.Position == "Top" then
+                        startPos = Vector2.new(cam.ViewportSize.X / 2, 0)
+                    elseif espData.Settings.Tracer.Position == "Center" then
+                        startPos = cam.ViewportSize / 2
+                    else -- Bottom
+                        startPos = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y)
+                    end
+                    espData.Drawing.Tracer.From = startPos
+                    espData.Drawing.Tracer.To = Vector2.new(pos.X, pos.Y)
+                    espData.Drawing.Tracer.Visible = true
+                end
 
--- Render Loop
-RunService.RenderStepped:Connect(function()
-    if not ESP.Settings.Enable then
-        for _, obj in pairs(ESP.Targets) do
-            if obj.Text then obj.Text.Visible = false end
-            if obj.Tracer then obj.Tracer.Visible = false end
-            if obj.Highlight then obj.Highlight.Enabled = false end
-        end
-        return
-    end
+                -- Nome
+                if espData.Drawing.Name then
+                    espData.Drawing.Name.Position = Vector2.new(pos.X, pos.Y - 20)
+                    espData.Drawing.Name.Text = target.Parent.Name
+                    espData.Drawing.Name.Visible = true
+                end
 
-    local camPos = camera.CFrame.Position
-
-    for _, obj in pairs(ESP.Targets) do
-        local part = obj.PrimaryPart
-        if not (obj.Visible and part and part:IsDescendantOf(workspace)) then
-            if obj.Text then obj.Text.Visible = false end
-            if obj.Tracer then obj.Tracer.Visible = false end
-            if obj.Highlight then obj.Highlight.Enabled = false end
-            continue
-        end
-
-        local pos, onScreen = camera:WorldToViewportPoint(part.Position)
-        if not onScreen then
-            if obj.Text then obj.Text.Visible = false end
-            if obj.Tracer then obj.Tracer.Visible = false end
-            if obj.Highlight then obj.Highlight.Enabled = false end
-            continue
-        end
-
-        -- Text (Name + Distance)
-        if ESP.Settings.EspName or ESP.Settings.EspDistance then
-            local dist = (camPos - part.Position).Magnitude
-            local label = ""
-            if ESP.Settings.EspName then label = label .. obj.Name end
-            if ESP.Settings.EspDistance then label = label .. string.format(" [%.0f]", dist) end
-
-            obj.Text.Text = label
-            obj.Text.Position = Vector2.new(pos.X, pos.Y - 15)
-            obj.Text.Visible = true
+                -- Distância
+                if espData.Drawing.Distance then
+                    local distance = (cam.CFrame.Position - target.Position).Magnitude
+                    espData.Drawing.Distance.Position = Vector2.new(pos.X, pos.Y - 5)
+                    espData.Drawing.Distance.Text = string.format("%dm", math.floor(distance))
+                    espData.Drawing.Distance.Visible = true
+                end
+            else
+                for _, obj in pairs(espData.Drawing) do
+                    obj.Visible = false
+                end
+            end
         else
-            obj.Text.Visible = false
-        end
-
-        -- Tracer
-        if ESP.Settings.EspTracer then
-            obj.Tracer.From = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y)
-            obj.Tracer.To = Vector2.new(pos.X, pos.Y)
-            obj.Tracer.Visible = true
-        else
-            obj.Tracer.Visible = false
-        end
-
-        -- Highlight
-        if obj.Highlight then
-            obj.Highlight.FillTransparency = ESP.Settings.EspHighlightFill and 0.5 or 1
-            obj.Highlight.OutlineTransparency = ESP.Settings.EspHighlightOutline and 0 or 1
-            obj.Highlight.Enabled = true
+            ESP:Remove(espData)
         end
     end
 end)
