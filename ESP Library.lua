@@ -1,201 +1,255 @@
--- DeltaEspHub - ESP Library orientada a endereço de objetos (Model/BasePart)
--- Suporte: Tracer (Top/Center/Bottom), HighlightOutline, HighlightFill, Name, Distance
--- Uso: loadstring(game:HttpGet("https://raw.githubusercontent.com/SeuUsuario/DeltaEspHub/main/DeltaEspHub.lua"))()
+--[[
+	KoltESP Library
+	Author: [YourName]
+	Description:
+	- Modular, address-oriented ESP Library for Roblox objects (Model, BasePart, etc).
+	- Easily extensible, configurable, and supports multiple ESP types.
+	- Usage: Kolt:AddEsp{...}, Kolt:Destroy(espObj), Kolt:Modify{...}
+]]
 
-local DeltaEspHub = {
-    _objects = {},
-    _espTypes = {"Tracer", "HighlightOutline", "HighlightFill", "Name", "Distance"},
-    _tracerOrigin = "Bottom", -- Opções: "Top", "Center", "Bottom"
-    _espFolder = nil,
-    _connections = {},
+local Kolt = {}
+Kolt.__index = Kolt
+
+------------------------------------------------------------
+-- UTILS
+------------------------------------------------------------
+local function deepCopy(t)
+	local copy = {}
+	for k, v in pairs(t) do
+		if type(v) == "table" then
+			copy[k] = deepCopy(v)
+		else
+			copy[k] = v
+		end
+	end
+	return copy
+end
+
+local function getPartPos(obj, origin)
+	if not obj then return nil end
+	if obj:IsA("BasePart") then
+		if origin == "Top" then return obj.Position + Vector3.new(0, obj.Size.Y / 2, 0)
+		elseif origin == "Bottom" then return obj.Position - Vector3.new(0, obj.Size.Y / 2, 0)
+		else return obj.Position end
+	elseif obj:IsA("Model") then
+		local p = obj:GetPrimaryPartCFrame() and obj.PrimaryPart.Position or obj:GetModelCFrame().p
+		return p
+	end
+	return nil
+end
+
+------------------------------------------------------------
+-- ESP OBJECT
+------------------------------------------------------------
+local ESP = {}
+ESP.__index = ESP
+
+function ESP:Destroy()
+	if self._cleanup then
+		for _, v in ipairs(self._cleanup) do
+			pcall(function() v:Destroy() end)
+		end
+	end
+	self._removed = true
+end
+
+function ESP:Modify(props)
+	for k, v in pairs(props) do
+		self.Config[k] = v
+	end
+end
+
+------------------------------------------------------------
+-- ESP TYPES
+------------------------------------------------------------
+
+local function CreateTracer(target, config)
+	local tracer = Drawing.new("Line")
+	tracer.Visible = true
+	tracer.Color = config.Color or Color3.new(1,1,1)
+	tracer.Thickness = config.Thickness or 2
+	tracer.Transparency = config.Opacity or 1
+
+	local origin = config.Origin or "Bottom"
+	local function update()
+		if not target or not target.Parent then tracer.Visible = false return end
+		local partPos = getPartPos(target, origin)
+		if not partPos then tracer.Visible = false return end
+		local screenPos, onScreen = workspace.CurrentCamera:WorldToViewportPoint(partPos)
+		if onScreen then
+			tracer.To = Vector2.new(screenPos.X, screenPos.Y)
+			local fromVec
+			if origin == "Top" then fromVec = Vector2.new(screenPos.X, 0)
+			elseif origin == "Center" then fromVec = Vector2.new(workspace.CurrentCamera.ViewportSize.X/2, workspace.CurrentCamera.ViewportSize.Y/2)
+			else fromVec = Vector2.new(screenPos.X, workspace.CurrentCamera.ViewportSize.Y) end
+			tracer.From = fromVec
+			tracer.Visible = true
+		else
+			tracer.Visible = false
+		end
+	end
+
+	local conn = game:GetService("RunService").RenderStepped:Connect(update)
+	return tracer, {tracer, conn}
+end
+
+local function CreateHighlight(target, config)
+	local highlight = Instance.new("Highlight")
+	highlight.Adornee = target
+	highlight.Parent = game.CoreGui
+
+	highlight.FillColor = config.FillColor or Color3.new(1,1,1)
+	highlight.OutlineColor = config.OutlineColor or Color3.new(0,0,0)
+	highlight.FillTransparency = 1 - (config.FillOpacity or 0.5)
+	highlight.OutlineTransparency = 1 - (config.OutlineOpacity or 1)
+
+	highlight.Fill = config.Fill ~= false
+	highlight.Outline = config.Outline ~= false
+
+	return highlight, {highlight}
+end
+
+local function CreateName(target, config)
+	local billboard = Instance.new("BillboardGui")
+	billboard.AlwaysOnTop = true
+	billboard.Size = UDim2.new(0, 100, 0, 40)
+	billboard.Adornee = target
+	billboard.Parent = game.CoreGui
+
+	local text = Instance.new("TextLabel")
+	text.Parent = billboard
+	text.Size = UDim2.new(1, 0, 1, 0)
+	text.BackgroundTransparency = 1
+	text.TextColor3 = config.Color or Color3.new(1,1,1)
+	text.Text = config.Name or target.Name
+	text.TextStrokeTransparency = 0.5
+	text.Font = config.Font or Enum.Font.Gotham
+	text.TextScaled = true
+
+	return billboard, {billboard, text}
+end
+
+local function CreateDistance(target, config)
+	local billboard = Instance.new("BillboardGui")
+	billboard.AlwaysOnTop = true
+	billboard.Size = UDim2.new(0, 100, 0, 20)
+	billboard.Adornee = target
+	billboard.Parent = game.CoreGui
+
+	local text = Instance.new("TextLabel")
+	text.Parent = billboard
+	text.Size = UDim2.new(1, 0, 1, 0)
+	text.BackgroundTransparency = 1
+	text.TextColor3 = config.Color or Color3.new(1,1,1)
+	text.TextStrokeTransparency = 0.6
+	text.Font = Enum.Font.Gotham
+	text.TextScaled = true
+
+	local function update()
+		if not target or not target.Parent then billboard.Enabled = false return end
+		local root = game.Players.LocalPlayer.Character and game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if root then
+			local dist = (getPartPos(target, "Center") - root.Position).Magnitude
+			text.Text = ("%.1fm"):format(dist)
+			billboard.Enabled = true
+		else
+			billboard.Enabled = false
+		end
+	end
+
+	local conn = game:GetService("RunService").RenderStepped:Connect(update)
+	return billboard, {billboard, text, conn}
+end
+
+------------------------------------------------------------
+-- KOLT LIBRARY CORE
+------------------------------------------------------------
+
+Kolt._espList = {}
+
+function Kolt:AddEsp(tbl)
+	-- tbl: {Tracer = {...}, Highlight = {...}, Name = {...}, Distance = {...}}
+	local target = tbl.Target
+	assert(target, "Target (Model/BasePart) is required!")
+
+	local espObjs = {}
+	if tbl.Tracer then
+		local obj, cleanup = CreateTracer(target, tbl.Tracer)
+		table.insert(espObjs, setmetatable({
+			Type = "Tracer",
+			Target = target,
+			Config = deepCopy(tbl.Tracer),
+			Obj = obj,
+			_cleanup = cleanup,
+		}, ESP))
+	end
+	if tbl.Highlight then
+		local obj, cleanup = CreateHighlight(target, tbl.Highlight)
+		table.insert(espObjs, setmetatable({
+			Type = "Highlight",
+			Target = target,
+			Config = deepCopy(tbl.Highlight),
+			Obj = obj,
+			_cleanup = cleanup,
+		}, ESP))
+	end
+	if tbl.Name then
+		local obj, cleanup = CreateName(target, tbl.Name)
+		table.insert(espObjs, setmetatable({
+			Type = "Name",
+			Target = target,
+			Config = deepCopy(tbl.Name),
+			Obj = obj,
+			_cleanup = cleanup,
+		}, ESP))
+	end
+	if tbl.Distance then
+		local obj, cleanup = CreateDistance(target, tbl.Distance)
+		table.insert(espObjs, setmetatable({
+			Type = "Distance",
+			Target = target,
+			Config = deepCopy(tbl.Distance),
+			Obj = obj,
+			_cleanup = cleanup,
+		}, ESP))
+	end
+	for _, espObj in ipairs(espObjs) do
+		table.insert(self._espList, espObj)
+	end
+	return espObjs
+end
+
+function Kolt:Destroy(espObj)
+	if type(espObj) == "table" then
+		if espObj.Destroy then
+			espObj:Destroy()
+		else
+			for _, v in ipairs(espObj) do
+				if v.Destroy then v:Destroy() end
+			end
+		end
+	end
+end
+
+function Kolt:Modify(espObj, props)
+	if type(espObj) == "table" and espObj.Modify then
+		espObj:Modify(props)
+	end
+end
+
+------------------------------------------------------------
+-- USAGE EXAMPLES
+------------------------------------------------------------
+
+--[[
+local myEsp = Kolt:AddEsp{
+	Target = workspace.Part,
+	Tracer = {Color = Color3.new(1,0,0), Origin = "Bottom", Opacity = 0.8},
+	Highlight = {Outline = true, Fill = true, OutlineColor = Color3.new(0,0,0), FillColor = Color3.new(1,1,1), OutlineOpacity = 0.7, FillOpacity = 0.5},
+	Name = {Name = "example", Color = Color3.new(1,1,0)},
+	Distance = {Color = Color3.new(0,1,0)},
 }
+Kolt:Destroy(myEsp)
+]]
 
--- Utilitários internos
-local function isBasePart(obj)
-    return typeof(obj) == "Instance" and obj:IsA("BasePart")
-end
-
-local function isModel(obj)
-    return typeof(obj) == "Instance" and obj:IsA("Model") and obj.PrimaryPart
-end
-
-local function getPosition(obj, origin)
-    if isBasePart(obj) then
-        local cf = obj.CFrame
-        if origin == "Center" then
-            return cf.Position
-        elseif origin == "Top" then
-            return (cf * CFrame.new(0, obj.Size.Y/2, 0)).Position
-        elseif origin == "Bottom" then
-            return (cf * CFrame.new(0, -obj.Size.Y/2, 0)).Position
-        end
-    elseif isModel(obj) then
-        local pp = obj.PrimaryPart
-        return getPosition(pp, origin)
-    end
-    return nil
-end
-
--- ESP Functions
-function DeltaEspHub:AddObject(obj)
-    if not (isBasePart(obj) or isModel(obj)) then return end
-    if self._objects[obj] then return end
-
-    -- Cria tabela para armazenar os elementos de ESP desse objeto
-    self._objects[obj] = {}
-
-    -- Tracer
-    if self.EnabledTypes.Tracer then
-        local tracer = Drawing.new("Line")
-        tracer.Color = Color3.fromRGB(255,255,255)
-        tracer.Thickness = 2
-        tracer.Visible = true
-        self._objects[obj].Tracer = tracer
-    end
-
-    -- HighlightOutline
-    if self.EnabledTypes.HighlightOutline or self.EnabledTypes.HighlightFill then
-        local highlight = Instance.new("Highlight")
-        highlight.Adornee = obj
-        highlight.Parent = self._espFolder
-        highlight.Enabled = true
-        if self.EnabledTypes.HighlightOutline then
-            highlight.OutlineColor = Color3.fromRGB(255,255,255)
-            highlight.OutlineTransparency = 0
-        else
-            highlight.OutlineTransparency = 1
-        end
-        if self.EnabledTypes.HighlightFill then
-            highlight.FillColor = Color3.fromRGB(255,255,255)
-            highlight.FillTransparency = 0.5
-        else
-            highlight.FillTransparency = 1
-        end
-        self._objects[obj].Highlight = highlight
-    end
-
-    -- Name
-    if self.EnabledTypes.Name then
-        local nameDrawing = Drawing.new("Text")
-        nameDrawing.Text = obj.Name
-        nameDrawing.Size = 16
-        nameDrawing.Color = Color3.fromRGB(255,255,255)
-        nameDrawing.Outline = true
-        nameDrawing.Visible = true
-        self._objects[obj].Name = nameDrawing
-    end
-
-    -- Distance
-    if self.EnabledTypes.Distance then
-        local distDrawing = Drawing.new("Text")
-        distDrawing.Text = "0m"
-        distDrawing.Size = 14
-        distDrawing.Color = Color3.fromRGB(0,255,127)
-        distDrawing.Outline = true
-        distDrawing.Visible = true
-        self._objects[obj].Distance = distDrawing
-    end
-end
-
-function DeltaEspHub:RemoveObject(obj)
-    if not self._objects[obj] then return end
-    for _, v in pairs(self._objects[obj]) do
-        if typeof(v) == "Instance" and v.Destroy then
-            v:Destroy()
-        elseif typeof(v) == "table" and v.Remove then
-            v:Remove()
-        elseif typeof(v) == "userdata" and v.Remove then
-            v:Remove()
-        end
-    end
-    self._objects[obj] = nil
-end
-
-function DeltaEspHub:SetTracerOrigin(origin)
-    if origin == "Top" or origin == "Center" or origin == "Bottom" then
-        self._tracerOrigin = origin
-    end
-end
-
-function DeltaEspHub:EnableEspType(espType)
-    if table.find(self._espTypes, espType) then
-        self.EnabledTypes[espType] = true
-    end
-end
-
-function DeltaEspHub:DisableEspType(espType)
-    if table.find(self._espTypes, espType) then
-        self.EnabledTypes[espType] = false
-    end
-end
-
--- Atualização dos ESPs
-function DeltaEspHub:Update()
-    local camera = workspace.CurrentCamera
-    local localPlayer = game.Players.LocalPlayer
-    for obj, elements in pairs(self._objects) do
-        local pos = getPosition(obj, self._tracerOrigin)
-        if pos then
-            local vec, onScreen = camera:WorldToViewportPoint(pos)
-            -- Tracer
-            if elements.Tracer then
-                elements.Tracer.From = Vector2.new(vec.X, vec.Y)
-                elements.Tracer.To = Vector2.new(camera.ViewportSize.X/2, camera.ViewportSize.Y)
-                elements.Tracer.Visible = onScreen
-            end
-            -- Name
-            if elements.Name then
-                elements.Name.Position = Vector2.new(vec.X, vec.Y - 20)
-                elements.Name.Visible = onScreen
-            end
-            -- Distance
-            if elements.Distance and localPlayer and localPlayer.Character and localPlayer.Character.PrimaryPart then
-                local dist = (localPlayer.Character.PrimaryPart.Position - pos).Magnitude
-                elements.Distance.Text = string.format("%.1fm", dist)
-                elements.Distance.Position = Vector2.new(vec.X, vec.Y + 10)
-                elements.Distance.Visible = onScreen
-            end
-        end
-    end
-end
-
--- Inicialização
-function DeltaEspHub:Init()
-    self._espFolder = Instance.new("Folder")
-    self._espFolder.Name = "DeltaEspHubFolder"
-    self._espFolder.Parent = game.CoreGui
-
-    self.EnabledTypes = {
-        Tracer = true,
-        HighlightOutline = false,
-        HighlightFill = false,
-        Name = true,
-        Distance = true,
-    }
-
-    -- Atualização contínua
-    local RunService = game:GetService("RunService")
-    table.insert(self._connections, RunService.RenderStepped:Connect(function()
-        self:Update()
-    end))
-end
-
-function DeltaEspHub:Destroy()
-    for obj in pairs(self._objects) do
-        self:RemoveObject(obj)
-    end
-    if self._espFolder then
-        self._espFolder:Destroy()
-        self._espFolder = nil
-    end
-    for _, conn in ipairs(self._connections) do
-        if conn and conn.Disconnect then
-            conn:Disconnect()
-        end
-    end
-    self._connections = {}
-end
-
-DeltaEspHub:Init()
-
-return DeltaEspHub
+return Kolt
