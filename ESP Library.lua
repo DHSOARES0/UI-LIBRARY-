@@ -1,11 +1,9 @@
 --[[
-    📦 ESP HUB LIBRARY
-    ✅ Model & BasePart Support
-    ✅ Tracer (Top / Center / Bottom)
-    ✅ Highlight Outline
-    ✅ Highlight Fill
-    ✅ Name
-    ✅ Distance (Value.m)
+    📦 ESP HUB LIBRARY (Refatorada)
+    ✅ Nome customizável
+    ✅ Distância abaixo do nome
+    ✅ Cor e transparência individuais para Outline/Fill
+    ✅ Apenas um Highlight para ambos os tipos
     📝 Hospede no GitHub e use:
         loadstring(game:HttpGet("https://raw.githubusercontent.com/SEUUSER/SEUREPO/main/esp.lua"))()
 --]]
@@ -14,8 +12,6 @@ local ESPHub = {}
 ESPHub.__index = ESPHub
 
 local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
 local function WorldToScreen(pos)
@@ -31,39 +27,51 @@ function ESPHub:Create(target, settings)
     esp.Target = target
     esp.Enabled = true
 
-    -- Configurações padrão
-    esp.Color = settings.Color or Color3.fromRGB(255, 255, 255)
-    esp.TracerOrigin = settings.TracerOrigin or "Bottom" -- Top/Center/Bottom
+    -- Configurações
+    esp.DisplayName = settings.DisplayName or target.Name
+    esp.TracerOrigin = settings.TracerOrigin or "Bottom" -- Top / Center / Bottom
     esp.ShowTracer = settings.ShowTracer or false
     esp.ShowOutline = settings.ShowOutline or false
     esp.ShowFill = settings.ShowFill or false
     esp.ShowName = settings.ShowName or false
     esp.ShowDistance = settings.ShowDistance or false
 
-    -- Elementos Drawing
+    -- Cores e transparência individuais
+    esp.OutlineColor = settings.OutlineColor or Color3.fromRGB(255, 255, 255)
+    esp.FillColor = settings.FillColor or Color3.fromRGB(255, 255, 255)
+    esp.OutlineTransparency = settings.OutlineTransparency or 0
+    esp.FillTransparency = settings.FillTransparency or 0.5
+
+    -- Drawing Objects
     esp.Tracer = Drawing.new("Line")
     esp.Tracer.Thickness = 1
-    esp.Tracer.Color = esp.Color
+    esp.Tracer.Color = esp.OutlineColor
 
-    esp.Label = Drawing.new("Text")
-    esp.Label.Size = 14
-    esp.Label.Color = esp.Color
-    esp.Label.Center = true
-    esp.Label.Outline = true
+    esp.LabelName = Drawing.new("Text")
+    esp.LabelName.Size = 14
+    esp.LabelName.Color = esp.OutlineColor
+    esp.LabelName.Center = true
+    esp.LabelName.Outline = true
 
-    -- Chams (Highlight)
+    esp.LabelDist = Drawing.new("Text")
+    esp.LabelDist.Size = 13
+    esp.LabelDist.Color = esp.OutlineColor
+    esp.LabelDist.Center = true
+    esp.LabelDist.Outline = true
+
+    -- Highlight único
     if esp.ShowOutline or esp.ShowFill then
         local hl = Instance.new("Highlight")
         hl.Adornee = target
-        hl.OutlineTransparency = esp.ShowOutline and 0 or 1
-        hl.FillTransparency = esp.ShowFill and 0.5 or 1
-        hl.OutlineColor = esp.Color
-        hl.FillColor = esp.Color
+        hl.OutlineTransparency = esp.ShowOutline and esp.OutlineTransparency or 1
+        hl.FillTransparency = esp.ShowFill and esp.FillTransparency or 1
+        hl.OutlineColor = esp.OutlineColor
+        hl.FillColor = esp.FillColor
         hl.Parent = target
         esp.Highlight = hl
     end
 
-    -- Atualização RenderStepped
+    -- Atualização
     esp.Connection = RunService.RenderStepped:Connect(function()
         esp:Update()
     end)
@@ -74,7 +82,8 @@ end
 function ESPHub:Update()
     if not self.Enabled or not self.Target then
         self.Tracer.Visible = false
-        self.Label.Visible = false
+        self.LabelName.Visible = false
+        self.LabelDist.Visible = false
         return
     end
 
@@ -96,7 +105,7 @@ function ESPHub:Update()
         originY = Camera.ViewportSize.Y / 2
     end
 
-    local screenPos, onScreen, depth = WorldToScreen(pos)
+    local screenPos, onScreen = WorldToScreen(pos)
 
     if onScreen then
         -- Tracer
@@ -108,42 +117,42 @@ function ESPHub:Update()
             self.Tracer.Visible = false
         end
 
-        -- Nome + Distância
-        local text = ""
+        -- Nome
         if self.ShowName then
-            text = self.Target.Name
+            self.LabelName.Text = self.DisplayName
+            self.LabelName.Position = screenPos - Vector2.new(0, 20)
+            self.LabelName.Visible = true
+        else
+            self.LabelName.Visible = false
         end
+
+        -- Distância
         if self.ShowDistance then
             local dist = (Camera.CFrame.Position - pos).Magnitude
-            text = text .. string.format(" %.1fm", dist)
+            self.LabelDist.Text = string.format("%.1fm", dist)
+            self.LabelDist.Position = screenPos - Vector2.new(0, 5)
+            self.LabelDist.Visible = true
+        else
+            self.LabelDist.Visible = false
         end
-        self.Label.Text = text
-        self.Label.Position = screenPos - Vector2.new(0, 20)
-        self.Label.Visible = (text ~= "")
 
     else
         self.Tracer.Visible = false
-        self.Label.Visible = false
+        self.LabelName.Visible = false
+        self.LabelDist.Visible = false
     end
 end
 
 function ESPHub:Remove()
     self.Enabled = false
-    if self.Connection then
-        self.Connection:Disconnect()
-    end
-    if self.Tracer then
-        self.Tracer:Remove()
-    end
-    if self.Label then
-        self.Label:Remove()
-    end
-    if self.Highlight then
-        self.Highlight:Destroy()
-    end
+    if self.Connection then self.Connection:Disconnect() end
+    if self.Tracer then self.Tracer:Remove() end
+    if self.LabelName then self.LabelName:Remove() end
+    if self.LabelDist then self.LabelDist:Remove() end
+    if self.Highlight then self.Highlight:Destroy() end
 end
 
--- Criar "Gerenciador" estilo HUB
+-- HUB Manager
 local Manager = {}
 function Manager:New(...)
     return ESPHub:Create(...)
